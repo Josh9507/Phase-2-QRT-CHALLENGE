@@ -43,16 +43,10 @@ def autocorrelation(close, n=20, factor_name='autocorrelation'):
     #          result = ROLLING_CORR(RETURN, RETURN.shift(1), N)
     # Measures the persistence of returns over the past N periods.
     # Positive values indicate momentum (trending), negative values indicate mean-reversion.
-    df = pd.DataFrame({'close': close})
-    df['_return'] = df['close'].pct_change()
-    df['_return_lag1'] = df['_return'].shift(1)
-
-    df[factor_name] = df['_return'].rolling(n, min_periods=2).corr(df['_return_lag1'])
-
-    del df['_return']
-    del df['_return_lag1']
-
-    return df
+    ret = close.pct_change()
+    result = ret.rolling(n, min_periods=2).corr(ret.shift(1))
+    result.name = factor_name
+    return result
 
 
 def williams_r(high, low, close, period=14):
@@ -606,6 +600,34 @@ def volume_feature(volume):
     return volume
 
 
+def biasvol(volume, n):
+    """
+    Calculate BIASVOL (Volume Bias / Deviation Rate).
+
+    BIASVOL(N) = (VOLUME - MA(VOLUME, N)) / MA(VOLUME, N)
+
+    Measures how far current volume deviates from its N-period simple moving
+    average as a ratio. Positive values mean volume is above its average
+    (unusual activity), negative values mean volume is below average.
+
+    Standard thresholds for combined buy/sell signals across three periods:
+        Buy  signal: BIASVOL6 >  5 AND BIASVOL12 >  7 AND BIASVOL24 > 11
+        Sell signal: BIASVOL6 < -5 AND BIASVOL12 < -7 AND BIASVOL24 < -11
+
+    Args:
+        volume: pandas Series of volume data
+        n: lookback window for the simple moving average (e.g. 6, 12, 24)
+
+    Returns:
+        pandas Series of BIASVOL values (same index as volume).
+        First (n-1) rows are NaN due to insufficient MA history.
+    """
+    ma = volume.rolling(window=n, min_periods=n).mean()
+    result = (volume - ma) / ma
+    result.name = f'biasvol_{n}'
+    return result
+
+
 def calculate_all_indicators(data_matrix):
     """
     Calculate all technical indicators for a data matrix.
@@ -699,8 +721,12 @@ def calculate_all_indicators(data_matrix):
         indicators[ticker]['chaikin_money_flow'] = chaikin_money_flow(high, low, close, volume)
         indicators[ticker]['accumulation_distribution_index'] = accumulation_distribution_index(high, low, close, volume)
         indicators[ticker]['volume'] = volume_data[ticker]
-        # My custom indicators
-        indicators[ticker]['autocorrelation'] = autocorrelation(close, n=len(close), factor_name='autocorrelation')
+        # BIASVOL indicators
+        indicators[ticker]['biasvol_6']  = biasvol(volume, 6)
+        indicators[ticker]['biasvol_12'] = biasvol(volume, 12)
+        indicators[ticker]['biasvol_24'] = biasvol(volume, 24)
+        # Autocorrelation
+        indicators[ticker]['autocorrelation'] = autocorrelation(close, n=20, factor_name='autocorrelation')
     
     return indicators
 
@@ -792,6 +818,12 @@ def _calculate_indicators_for_ticker(ticker, data_matrix):
     ticker_indicators['chaikin_money_flow'] = chaikin_money_flow(high, low, close, volume)
     ticker_indicators['accumulation_distribution_index'] = accumulation_distribution_index(high, low, close, volume)
     ticker_indicators['volume'] = volume_data[ticker]
+    # BIASVOL indicators
+    ticker_indicators['biasvol_6']  = biasvol(volume, 6)
+    ticker_indicators['biasvol_12'] = biasvol(volume, 12)
+    ticker_indicators['biasvol_24'] = biasvol(volume, 24)
+    # Autocorrelation
+    ticker_indicators['autocorrelation'] = autocorrelation(close, n=20, factor_name='autocorrelation')
     
     return ticker, ticker_indicators
 
@@ -1061,4 +1093,3 @@ def load_indicator_from_parquet(indicator_name, directory='stores/indicators'):
         raise FileNotFoundError(f"Indicator file not found: {filepath}")
     
     return pd.read_parquet(filepath)
-
