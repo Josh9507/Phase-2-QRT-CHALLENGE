@@ -423,6 +423,53 @@ def ultimate_oscillator(high, low, close, period1=7, period2=14, period3=28):
     
     return uo
 
+def hull_ma(close, n=20, factor_name=None):
+    """
+    Calculate Hull Moving Average (HullMA) signal.
+ 
+    HullMA reduces lag compared to ordinary moving averages by using the
+    difference between a half-period EMA and a full-period EMA, then
+    smoothing that difference with a sqrt(N)-period EMA.
+ 
+    Formula:
+        X       = 2 * EMA(close, N/2)  -  EMA(close, N)
+        HullMA  = EMA(X, sqrt(N))
+        signal  = X - HullMA   (normalised to [0,1] over a rolling N-window)
+ 
+    Positive signal → price above HullMA (bullish crossover)
+    Negative signal → price below HullMA (bearish crossover)
+ 
+    Args:
+        close      : pandas Series of close prices
+        n          : lookback period (e.g. 20 or 80)
+        factor_name: optional name for the returned Series
+                     (defaults to 'hull_ma_{n}')
+ 
+    Returns:
+        pandas Series of 0-1 normalised HullMA signal values
+    """
+    if factor_name is None:
+        factor_name = f'hull_ma_{n}'
+ 
+    # Core HullMA calculation
+    _x     = (2 * close.ewm(span=int(n / 2), adjust=False, min_periods=1).mean()
+                 - close.ewm(span=n,          adjust=False, min_periods=1).mean())
+    hullma = _x.ewm(span=int(np.sqrt(n)), adjust=False, min_periods=1).mean()
+ 
+    # Raw signal: distance of X above/below HullMA
+    s = _x - hullma
+ 
+    # 0-1 min-max normalisation over a rolling N-window (same as scale_01 in image)
+    _s     = pd.Series(s)
+    roll_min = _s.rolling(n, min_periods=1).min()
+    roll_max = _s.rolling(n, min_periods=1).max()
+    result   = (_s - roll_min) / (1e-9 + roll_max - roll_min)
+ 
+    result.index = close.index
+    result.name  = factor_name
+    return result
+ 
+ 
 
 def aroon(high, low, period=26):
     """
@@ -727,6 +774,9 @@ def calculate_all_indicators(data_matrix):
         indicators[ticker]['biasvol_24'] = biasvol(volume, 24)
         # Autocorrelation
         indicators[ticker]['autocorrelation'] = autocorrelation(close, n=20, factor_name='autocorrelation')
+        # HullMA indicators (N=20 short-term, N=80 long-term)
+        indicators[ticker]['hull_ma_20'] = hull_ma(close, n=20)
+        indicators[ticker]['hull_ma_80'] = hull_ma(close, n=80)
     
     return indicators
 
@@ -824,6 +874,9 @@ def _calculate_indicators_for_ticker(ticker, data_matrix):
     ticker_indicators['biasvol_24'] = biasvol(volume, 24)
     # Autocorrelation
     ticker_indicators['autocorrelation'] = autocorrelation(close, n=20, factor_name='autocorrelation')
+    # HullMA indicators (N=20 short-term, N=80 long-term)
+    ticker_indicators['hull_ma_20'] = hull_ma(close, n=20)
+    ticker_indicators['hull_ma_80'] = hull_ma(close, n=80)
     
     return ticker, ticker_indicators
 
